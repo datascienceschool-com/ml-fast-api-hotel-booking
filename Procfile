@@ -1,1 +1,1 @@
-web: uvicorn app.main:api --host=0.0.0.0 --port=${PORT:-5000}
+web: docker run -dp 3000:80 hotel-booking
