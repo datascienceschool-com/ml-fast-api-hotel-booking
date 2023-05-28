@@ -6,6 +6,7 @@ pipeline. And, the pipeline model object is tuned using GridSearch (cv=5).
 The best model from the GridSearch is persisted in a model store folder.
 """
 
+import logging
 import requests
 import joblib
 
@@ -20,8 +21,6 @@ from sklearn.pipeline import Pipeline
 from sklearn.impute import SimpleImputer
 from sklearn.preprocessing import OrdinalEncoder
 
-from sklearn.metrics import roc_auc_score, make_scorer
-
 # Fetch dataset from API
 URL = "http://localhost:8000/hotel_booking"  # Replace with your API endpoint
 HEADERS = {"Accept": "application/json"}
@@ -32,7 +31,7 @@ SEED = 123
 # Set model export file path
 MODEL_FILEPATH = "./models/hotel_booking_model.joblib"
 
-def fetch_data(url, headers):
+def load_data(url, headers):
     """Get raw data from an API.
 
     This function requests hotel booking data to DS School Data API,
@@ -48,19 +47,21 @@ def fetch_data(url, headers):
         A list of hotel booking records.
     """
     try:
-        response = requests.get(url, headers=headers)
+        response = requests.get(url, headers=headers, timeout=100)
         # If the response contains an HTTP error status code, this will raise a HTTPError
         response.raise_for_status()
         # Parse the JSON data from the response
         data = response.json()
-        print("Success! Data loaded.")
+        logging.info("Success! Data loaded from API.")
         return data
     except requests.exceptions.HTTPError as http_err:
-        print(f"HTTP error occurred: {http_err}")
+        logging.exception("HTTP error occurred: %s", http_err)
     except requests.exceptions.RequestException as err:
-        print(f"Error occurred: {err}")
-    except Exception as e:
-        print(f"An unexpected error occurred: {e}")
+        logging.exception("Error occurred: %s", err)
+    except Exception as err:
+        logging.exception("An unexpected error occurred: %s", err)
+        raise
+    return []
 
 def make_pipeline(model):
     """Make model pipeline for preprocessing and training.
@@ -79,6 +80,8 @@ def make_pipeline(model):
         A pipeline that combines preprocessing and model estimator.
     """
 
+    logging.info("Creating model pipeline for preprocessing and model fitting.")
+
     # Define preprocessing functions
     simple_imputer = SimpleImputer(strategy='mean')
     ordinal_encoder = OrdinalEncoder(handle_unknown='use_encoded_value', unknown_value=-99)
@@ -94,30 +97,18 @@ def make_pipeline(model):
         ('rf_model', model)
     ])
 
+    logging.info("Created model pipeline with the following steps: %s", pipeline.named_steps)
     return pipeline
 
-def serializable_model_metric(label, pred):
-    """Creates a wrapper for model metric function for pickling.
-
-    When persisting GridSearchCV model using Joblib, the model metric
-    function needs to be serializable. This wraps the roc_auc_score 
-    function such that the make_scorer function from sklearn.metrics
-    could be used to create a metric function that is serializable.
-
-    Args:
-        label: An array of labels
-        pred: An array of prediction values
-
-    Returns:
-        A float value with AUC score
-    """
-    error = roc_auc_score(label, pred)
-    return error
-
 if __name__ == '__main__':
-
+    # Set up project logging
+    logging.basicConfig(
+        filename='../train.log',
+        format="%(asctime)s %(levelname)-8s %(message)s",
+        datefmt="%Y-%m-%d %H:%M:%S",
+        level=logging.INFO)
     # Make an API call to fetch training data
-    booking_data = fetch_data(url=URL, headers=HEADERS)
+    booking_data = load_data(url=URL, headers=HEADERS)
     # Load into Pandas DataFrame
     colnames = ['age','destination','first_browser','language','booking']
     df = pd.DataFrame(booking_data, columns=colnames)
@@ -130,9 +121,6 @@ if __name__ == '__main__':
     # Create a model pipeline
     rf_model = RandomForestClassifier(random_state=SEED)
     model_pipeline = make_pipeline(rf_model)
-
-    # Create a model evaluator object
-    eval_func = make_scorer(serializable_model_metric, greater_is_better=True)
 
     # Grid Search tuning
     param_grid = {
@@ -147,6 +135,8 @@ if __name__ == '__main__':
         cv=5
     )
     grid_search.fit(X_train, y_train.values.ravel())
+    logging.info("Success! Model trained with grid search.")
 
     # Export model
     joblib.dump(grid_search, MODEL_FILEPATH)
+    logging.info("Exported model to the relative path from root: %s", MODEL_FILEPATH)
