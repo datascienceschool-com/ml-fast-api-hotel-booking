@@ -1,1 +1,0 @@
-web: docker run -dp 3000:80 hotel-booking
